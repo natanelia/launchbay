@@ -22,6 +22,16 @@ The order below favors reliable daily workflows over feature-count parity with m
 - Open exposed HTTP ports directly from the container detail view.
 - Import/export image archives.
 
+## Performance engineering
+
+See [Performance engineering](docs/PERFORMANCE.md) for measurement rules and security boundaries.
+
+- Benchmark bind-mounted source with VM-local dependencies and build caches.
+- Prototype reliable host-to-guest filesystem-event propagation.
+- Build explicit development sessions on the warm `container exec` primitive.
+- Measure and optimize project-network DNS, latency, throughput, and CPU cost.
+- Write an architecture decision record before grouping trusted services into a shared VM.
+
 ## Observability
 
 - Periodic CPU and memory statistics.
@@ -41,3 +51,4 @@ The order below favors reliable daily workflows over feature-count parity with m
 - Shipping a privileged kernel or network extension.
 - Pretending to be a Docker Engine socket before compatibility is complete and testable.
 - Storing registry passwords or cloud credentials in application preferences.
+- Weakening per-container VM isolation without an explicit, opt-in trust model and public runtime support.

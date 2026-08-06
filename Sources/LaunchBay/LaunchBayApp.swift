@@ -3,6 +3,7 @@
 
     @main
     struct LaunchBayApp: App {
+        @Environment(\.scenePhase) private var scenePhase
         @StateObject private var model = AppModel()
 
         var body: some Scene {
@@ -10,15 +11,15 @@
                 RootView()
                     .environmentObject(model)
                     .frame(minWidth: 980, minHeight: 640)
-                    .task {
-                        await model.bootstrap()
+                    .task(id: scenePhase) {
+                        await model.handleApplicationActive(scenePhase == .active)
                     }
             }
             .defaultSize(width: 1_180, height: 760)
             .commands {
                 CommandGroup(after: .sidebar) {
                     Button("Refresh") {
-                        Task { await model.refreshAll() }
+                        Task { await model.refreshAll(force: true) }
                     }
                     .keyboardShortcut("r", modifiers: .command)
 

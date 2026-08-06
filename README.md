@@ -20,6 +20,8 @@ LaunchBay gives Apple silicon Macs a focused, visual workflow for OCI/Docker ima
 - Build an image from a Dockerfile or Containerfile.
 - Run a container with ports, bind mounts, environment variables, CPU and memory limits, Rosetta, minimal init, read-only root filesystems, and automatic removal.
 - Discover the `container` executable automatically or use a custom path.
+- Coalesce concurrent read commands and cache low-volatility status and image metadata to avoid redundant CLI processes.
+- Refresh adaptively: fast while containers are active, slower while idle or stopped, and paused while the app is inactive.
 - Record a local in-memory activity trail with exact commands, output, duration, and exit code. Environment values are redacted.
 - Refresh automatically without blocking manual operations.
 
@@ -68,7 +70,7 @@ Apple container services and per-container Linux VMs
 
 The integration uses the CLI's machine-readable JSON output instead of linking Apple's internal Swift packages. That boundary is intentional: Apple currently warns that minor `container` releases may include breaking changes. The parser accepts additive fields and a small set of compatible key variants while still rejecting malformed or identity-less records.
 
-See [Architecture](docs/ARCHITECTURE.md) for the design and [Security](SECURITY.md) for the trust model.
+See [Architecture](docs/ARCHITECTURE.md) for the design, [Performance engineering](docs/PERFORMANCE.md) for the optimization plan, and [Security](SECURITY.md) for the trust model.
 
 ## Safety and privacy
 
@@ -101,7 +103,7 @@ Those are tracked as follow-on areas in [ROADMAP.md](ROADMAP.md). The architectu
 
 The check script formats and lints Swift, runs all tests, builds a release binary, and syntax-checks the macOS sources. CI performs the same tests on a macOS runner and packages the `.app` bundle.
 
-The core module is intentionally platform-neutral, so command construction and parsing can be tested on Linux as well as macOS. The native executable presents the SwiftUI application only on macOS.
+The core module is intentionally platform-neutral, so command construction, caching, cadence, and parsing can be tested on Linux as well as macOS. The native executable presents the SwiftUI application only on macOS.
 
 ## License
 

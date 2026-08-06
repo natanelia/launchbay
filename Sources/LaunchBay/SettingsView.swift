@@ -43,9 +43,12 @@
                         Text("Every 10 seconds").tag(10.0)
                         Text("Every 30 seconds").tag(30.0)
                     }
-                    .onChange(of: model.autoRefreshSeconds) { _, _ in
-                        model.restartAutoRefresh()
-                    }
+
+                    Text(
+                        "The selected interval applies while containers are running. LaunchBay backs off to 15 seconds when idle, 30 seconds when the system is stopped, and cancels background reads while the app is inactive."
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 }
 
                 Section("Host compatibility") {
