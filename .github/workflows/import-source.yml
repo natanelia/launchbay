@@ -47,9 +47,12 @@ jobs:
 
           mkdir /tmp/launchbay-source
           tar -xJf /tmp/launchbay.tar.xz -C /tmp/launchbay-source
+          cp .github/workflows/import-source.yml /tmp/import-source.yml
 
           git rm -rf .
           cp -a /tmp/launchbay-source/. .
+          mkdir -p .github/workflows
+          cp /tmp/import-source.yml .github/workflows/import-source.yml
           git add -A
           git config user.name "Natan"
           git config user.email "1708681+natanelia@users.noreply.github.com"
