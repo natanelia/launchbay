@@ -1,0 +1,27 @@
+name: Feature request
+description: Propose a focused workflow improvement
+title: "[Feature]: "
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: Describe the workflow or limitation, rather than only the requested UI control.
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Desired outcome
+    validations:
+      required: true
+  - type: textarea
+    id: cli
+    attributes:
+      label: Relevant Apple container CLI support
+      description: Include commands or upstream references when known.
+  - type: textarea
+    id: security
+    attributes:
+      label: Security or compatibility considerations
