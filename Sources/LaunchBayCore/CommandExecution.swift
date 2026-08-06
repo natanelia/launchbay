@@ -114,12 +114,17 @@ public struct ProcessCommandExecutor: CommandExecuting, Sendable {
     public init() {}
 
     public func execute(_ invocation: CommandInvocation) async throws -> CommandResult {
-        try await Task.detached(priority: .userInitiated) {
+        let task = Task.detached(priority: .userInitiated) {
             try Self.executeSynchronously(invocation)
-        }.value
+        }
+        return try await withTaskCancellationHandler(
+            operation: { try await task.value },
+            onCancel: { task.cancel() }
+        )
     }
 
     private static func executeSynchronously(_ invocation: CommandInvocation) throws -> CommandResult {
+        try Task.checkCancellation()
         guard FileManager.default.isExecutableFile(atPath: invocation.executableURL.path) else {
             throw CommandExecutionError.executableNotFound(invocation.executableURL.path)
         }
@@ -166,6 +171,7 @@ public struct ProcessCommandExecutor: CommandExecuting, Sendable {
             .joined(separator: ":")
         process.environment = environment
 
+        try Task.checkCancellation()
         let start = Date()
         do {
             try process.run()
@@ -175,19 +181,25 @@ public struct ProcessCommandExecutor: CommandExecuting, Sendable {
 
         let deadline = start.addingTimeInterval(max(0.1, invocation.timeoutSeconds))
         var timedOut = false
+        var cancelled = false
         while process.isRunning {
+            if Task.isCancelled {
+                cancelled = true
+                terminate(process)
+                break
+            }
             if Date() >= deadline {
                 timedOut = true
-                process.terminate()
-                Thread.sleep(forTimeInterval: 0.15)
-                if process.isRunning {
-                    _ = kill(process.processIdentifier, SIGKILL)
-                }
+                terminate(process)
                 break
             }
             Thread.sleep(forTimeInterval: 0.025)
         }
         process.waitUntilExit()
+
+        if cancelled {
+            throw CancellationError()
+        }
 
         try stdoutHandle.synchronize()
         try stderrHandle.synchronize()
@@ -215,5 +227,14 @@ public struct ProcessCommandExecutor: CommandExecuting, Sendable {
             exitCode: process.terminationStatus,
             durationSeconds: Date().timeIntervalSince(start)
         )
+    }
+
+    private static func terminate(_ process: Process) {
+        guard process.isRunning else { return }
+        process.terminate()
+        Thread.sleep(forTimeInterval: 0.15)
+        if process.isRunning {
+            _ = kill(process.processIdentifier, SIGKILL)
+        }
     }
 }

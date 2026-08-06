@@ -11,11 +11,8 @@
                 RootView()
                     .environmentObject(model)
                     .frame(minWidth: 980, minHeight: 640)
-                    .task {
-                        await model.bootstrap()
-                    }
-                    .onChange(of: scenePhase) { _, newPhase in
-                        model.setApplicationActive(newPhase == .active)
+                    .task(id: scenePhase) {
+                        await model.handleApplicationActive(scenePhase == .active)
                     }
             }
             .defaultSize(width: 1_180, height: 760)

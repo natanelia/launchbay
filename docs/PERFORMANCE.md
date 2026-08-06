@@ -6,30 +6,49 @@ LaunchBay should make Apple's `container` runtime feel fast without claiming own
 
 ### Fewer CLI process launches
 
-Read-only CLI calls now use two complementary mechanisms:
+Read-only CLI calls use two complementary mechanisms:
 
 - **In-flight coalescing:** concurrent identical reads share one CLI process.
 - **Short-lived result caching:** system status, container listings, and image listings use separate time-to-live values based on how quickly each resource normally changes.
 
-Mutating commands invalidate the affected cache immediately. A manual refresh clears every read cache before querying, so users can always force an authoritative view.
+Mutating commands invalidate the affected cache after every execution attempt, including nonzero exits and thrown timeout or launch errors. This is deliberate: a failed local CLI result does not prove that the runtime performed no side effect. A manual refresh cancels in-flight reads and clears every completed read cache before querying, so users can always force an authoritative view.
 
-With the default five-second refresh setting, the previous loop launched status, container-list, and image-list processes every cycle: up to 36 CLI processes per minute while the system was running. The new default cache windows reduce that theoretical steady-state ceiling to about 18 per minute while containers are active. The exact result depends on command duration, user actions, and application lifecycle.
+With the default five-second refresh setting, the previous loop launched status, container-list, and image-list processes every cycle: up to 36 CLI processes per minute while the system was running. The cache and cadence configuration produces the following **modeled steady-state process-launch ceilings**:
 
-### Adaptive refresh
+- 18 CLI processes per minute while one or more containers are active.
+- 10 CLI processes per minute while the runtime is running but idle.
+- 2 CLI processes per minute while the runtime is stopped.
+- No scheduled polling while LaunchBay is inactive.
+
+These are deterministic scheduling calculations, not measured CPU, energy, latency, or UI-throughput results. The focused tests encode the arithmetic so that cache or cadence changes cannot silently invalidate the documented model. Actual launch counts can be lower because each cycle waits for the preceding refresh, or higher because of manual refreshes and user-triggered mutations.
+
+### Adaptive refresh and application lifecycle
 
 The selected interval remains the foreground cadence while one or more containers are running. LaunchBay backs off to:
 
 - 15 seconds while the container system is running but no containers are active.
 - 30 seconds while the system is stopped or unavailable.
-- No polling while the application is inactive.
+- No scheduled polling while the application is inactive.
 
-Returning to the application performs a forced refresh before normal polling resumes.
+The scheduler uses a cancellable one-shot timer rather than a fixed perpetual loop. A runtime-state or running-container-count change cancels the obsolete sleep and immediately schedules the next cycle with the new cadence. Moving to an inactive scene cancels the timer, cancels in-flight read requests, and terminates their CLI child processes. Returning to the application performs a forced refresh before normal polling resumes.
+
+A user-started runtime mutation is not killed merely because the window becomes inactive; only background read work is cancelled. Once a mutation completes or fails, its affected cache has already been invalidated, and LaunchBay performs a silent reconciliation when the application is active.
 
 ### Warm-container execution
 
 `ContainerCLI.execContainer(id:command:timeoutSeconds:)` exposes Apple's `container exec` path through the typed core adapter. Future project runners and development sessions can reuse a running container VM for repeated commands instead of creating and booting a fresh VM for each operation.
 
-This is a foundation, not a general VM pool. LaunchBay does not keep hidden containers alive or alter Apple's lifecycle semantics in this change.
+This is a foundation, not a general VM pool. LaunchBay does not keep hidden containers alive or alter Apple's lifecycle semantics in this change. An `exec` attempt invalidates the container list because an arbitrary command can terminate PID 1 or otherwise change container state.
+
+## Current evidence and non-claims
+
+This change demonstrates fewer modeled CLI process launches and stronger lifecycle correctness. It does **not** yet demonstrate that a representative development workload builds, starts, or responds faster. In particular:
+
+- No CPU, memory, energy, or wall-clock improvement is claimed.
+- The typed `exec` adapter alone is not evidence of a faster development session.
+- Small-file, filesystem-event, networking, and shared-VM ideas below remain unimplemented workstreams.
+
+Any future user-facing speedup claim must be supported by the measurement protocol below.
 
 ## Measurement protocol
 
@@ -114,4 +133,4 @@ This likely requires public runtime capabilities below today's CLI surface. Unti
 
 ## Decision rule
 
-A performance change should merge only when it improves a representative workload, preserves correctness and security invariants, and includes enough measurement detail for another contributor to reproduce the result. Lower process count or prettier benchmark output alone is not sufficient.
+Scheduling and correctness foundations may merge when their deterministic behavior is tested and their claims are explicitly limited to what those tests establish. A user-facing workload-performance change should merge only when it improves a representative workload, preserves correctness and security invariants, and includes enough measurement detail for another contributor to reproduce the result. Lower process count or prettier benchmark output alone is not sufficient evidence of a workload speedup.

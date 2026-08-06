@@ -29,5 +29,9 @@ let package = Package(
             name: "LaunchBayCoreTests",
             dependencies: ["LaunchBayCore"]
         ),
+        .testTarget(
+            name: "LaunchBayTests",
+            dependencies: ["LaunchBay", "LaunchBayCore"]
+        ),
     ]
 )

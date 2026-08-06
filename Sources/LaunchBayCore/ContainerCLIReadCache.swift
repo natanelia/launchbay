@@ -2,8 +2,9 @@ import Foundation
 
 /// Controls how long low-volatility `container` CLI reads can be reused.
 ///
-/// A zero duration disables result caching for that read while still allowing concurrent identical
-/// requests to share one in-flight CLI process.
+/// Durations are evaluated against monotonic system uptime, so wall-clock adjustments cannot extend
+/// cache freshness. A zero duration disables completed-result caching for that read while still
+/// allowing concurrent identical requests to share one in-flight CLI process.
 public struct ContainerCLIReadCachePolicy: Hashable, Sendable {
     public var systemStatusTTL: TimeInterval
     public var containersTTL: TimeInterval

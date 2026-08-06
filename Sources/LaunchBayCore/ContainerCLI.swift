@@ -35,10 +35,10 @@ public enum ContainerCLIError: LocalizedError, Sendable {
 public actor ContainerCLI {
     private struct CacheEntry<Value: Sendable>: Sendable {
         let executed: Executed<Value>
-        let expiresAt: Date
+        let expiresAt: ContinuousClock.Instant
 
-        func isFresh(at date: Date) -> Bool {
-            expiresAt > date
+        func isFresh(at instant: ContinuousClock.Instant) -> Bool {
+            expiresAt > instant
         }
     }
 
@@ -50,6 +50,7 @@ public actor ContainerCLI {
 
     private let executor: any CommandExecuting
     private let readCachePolicy: ContainerCLIReadCachePolicy
+    private let cacheClock = ContinuousClock()
     private var executableURL: URL?
 
     private var cacheGeneration: UInt64 = 0
@@ -71,6 +72,7 @@ public actor ContainerCLI {
     }
 
     public func configure(executableURL: URL?) {
+        cancelPendingRequests()
         self.executableURL = executableURL
         invalidateReadCache()
     }
@@ -87,6 +89,14 @@ public actor ContainerCLI {
         invalidate(systemStatus: true, containers: true, images: true)
     }
 
+    /// Cancels all in-flight read commands and detaches their callers from future cache state.
+    ///
+    /// Completed cache entries are preserved. Call `invalidateReadCache()` as well when the next read
+    /// must be authoritative, such as a manual refresh or application resume.
+    public func cancelPendingReads() {
+        cancelPendingRequests()
+    }
+
     public func version() async throws -> Executed<String> {
         let result = try await execute(["--version"], timeout: 10)
         try requireSuccess(result)
@@ -95,7 +105,7 @@ public actor ContainerCLI {
     }
 
     public func systemStatus() async throws -> Executed<ContainerSystemStatus> {
-        let now = Date()
+        let now = cacheClock.now
         if let systemStatusCache, systemStatusCache.isFresh(at: now) {
             return systemStatusCache.executed
         }
@@ -118,7 +128,9 @@ public actor ContainerCLI {
             if request.generation == cacheGeneration, readCachePolicy.systemStatusTTL > 0 {
                 systemStatusCache = CacheEntry(
                     executed: executed,
-                    expiresAt: Date().addingTimeInterval(readCachePolicy.systemStatusTTL)
+                    expiresAt: cacheClock.now.advanced(
+                        by: .seconds(readCachePolicy.systemStatusTTL)
+                    )
                 )
             }
             return executed
@@ -131,23 +143,31 @@ public actor ContainerCLI {
     }
 
     public func startSystem() async throws -> Executed<Void> {
-        let result = try await execute(["system", "start"], timeout: 180)
-        try requireSuccess(result)
-        invalidateReadCache()
+        let result = try await executeMutation(
+            ["system", "start"],
+            timeout: 180,
+            systemStatus: true,
+            containers: true,
+            images: true
+        )
         return Executed(value: (), result: result)
     }
 
     public func stopSystem() async throws -> Executed<Void> {
-        let result = try await execute(["system", "stop"], timeout: 180)
-        try requireSuccess(result)
-        invalidateReadCache()
+        let result = try await executeMutation(
+            ["system", "stop"],
+            timeout: 180,
+            systemStatus: true,
+            containers: true,
+            images: true
+        )
         return Executed(value: (), result: result)
     }
 
     public func listContainers(includeStopped: Bool = true) async throws -> Executed<
         [ContainerSummary]
     > {
-        let now = Date()
+        let now = cacheClock.now
         if let cached = containerCaches[includeStopped], cached.isFresh(at: now) {
             return cached.executed
         }
@@ -170,7 +190,7 @@ public actor ContainerCLI {
             if request.generation == cacheGeneration, readCachePolicy.containersTTL > 0 {
                 containerCaches[includeStopped] = CacheEntry(
                     executed: executed,
-                    expiresAt: Date().addingTimeInterval(readCachePolicy.containersTTL)
+                    expiresAt: cacheClock.now.advanced(by: .seconds(readCachePolicy.containersTTL))
                 )
             }
             return executed
@@ -183,7 +203,7 @@ public actor ContainerCLI {
     }
 
     public func listImages() async throws -> Executed<[ImageSummary]> {
-        let now = Date()
+        let now = cacheClock.now
         if let imageCache, imageCache.isFresh(at: now) {
             return imageCache.executed
         }
@@ -206,7 +226,7 @@ public actor ContainerCLI {
             if request.generation == cacheGeneration, readCachePolicy.imagesTTL > 0 {
                 imageCache = CacheEntry(
                     executed: executed,
-                    expiresAt: Date().addingTimeInterval(readCachePolicy.imagesTTL)
+                    expiresAt: cacheClock.now.advanced(by: .seconds(readCachePolicy.imagesTTL))
                 )
             }
             return executed
@@ -219,16 +239,12 @@ public actor ContainerCLI {
     }
 
     public func startContainer(id: String) async throws -> Executed<Void> {
-        let result = try await execute(["start", id], timeout: 120)
-        try requireSuccess(result)
-        invalidate(containers: true)
+        let result = try await executeMutation(["start", id], timeout: 120, containers: true)
         return Executed(value: (), result: result)
     }
 
     public func stopContainer(id: String) async throws -> Executed<Void> {
-        let result = try await execute(["stop", id], timeout: 120)
-        try requireSuccess(result)
-        invalidate(containers: true)
+        let result = try await executeMutation(["stop", id], timeout: 120, containers: true)
         return Executed(value: (), result: result)
     }
 
@@ -236,9 +252,7 @@ public actor ContainerCLI {
         var arguments = ["delete"]
         if force { arguments.append("--force") }
         arguments.append(id)
-        let result = try await execute(arguments, timeout: 120)
-        try requireSuccess(result)
-        invalidate(containers: true)
+        let result = try await executeMutation(arguments, timeout: 120, containers: true)
         return Executed(value: (), result: result)
     }
 
@@ -249,6 +263,7 @@ public actor ContainerCLI {
         if boot { arguments.append("--boot") }
         arguments += ["-n", String(max(1, tail)), id]
         let result = try await execute(arguments, timeout: 30)
+        try Task.checkCancellation()
         try requireSuccess(result)
         return Executed(value: result.standardOutput, result: result)
     }
@@ -264,8 +279,11 @@ public actor ContainerCLI {
         else {
             throw ContainerCLIError.missingCommand
         }
-        let result = try await execute(["exec", id] + command, timeout: max(0.1, timeoutSeconds))
-        try requireSuccess(result)
+        let result = try await executeMutation(
+            ["exec", id] + command,
+            timeout: max(0.1, timeoutSeconds),
+            containers: true
+        )
         return Executed(value: result.standardOutput, result: result)
     }
 
@@ -275,9 +293,7 @@ public actor ContainerCLI {
             arguments += ["--platform", platform]
         }
         arguments.append(reference)
-        let result = try await execute(arguments, timeout: 1_800)
-        try requireSuccess(result)
-        invalidate(images: true)
+        let result = try await executeMutation(arguments, timeout: 1_800, images: true)
         return Executed(value: (), result: result)
     }
 
@@ -285,9 +301,7 @@ public actor ContainerCLI {
         var arguments = ["image", "delete"]
         if force { arguments.append("--force") }
         arguments.append(reference)
-        let result = try await execute(arguments, timeout: 300)
-        try requireSuccess(result)
-        invalidate(images: true)
+        let result = try await executeMutation(arguments, timeout: 300, images: true)
         return Executed(value: (), result: result)
     }
 
@@ -296,9 +310,12 @@ public actor ContainerCLI {
     > {
         try ConfigurationValidator.validate(configuration)
         let arguments = Self.runArguments(for: configuration)
-        let result = try await execute(arguments, timeout: 1_800)
-        try requireSuccess(result)
-        invalidate(containers: true, images: true)
+        let result = try await executeMutation(
+            arguments,
+            timeout: 1_800,
+            containers: true,
+            images: true
+        )
         return Executed(value: (), result: result)
     }
 
@@ -315,9 +332,7 @@ public actor ContainerCLI {
         if configuration.noCache { arguments.append("--no-cache") }
         arguments.append(configuration.contextPath)
 
-        let result = try await execute(arguments, timeout: 3_600)
-        try requireSuccess(result)
-        invalidate(images: true)
+        let result = try await executeMutation(arguments, timeout: 3_600, images: true)
         return Executed(value: (), result: result)
     }
 
@@ -347,6 +362,7 @@ public actor ContainerCLI {
 
     private func loadSystemStatus() async throws -> Executed<ContainerSystemStatus> {
         let result = try await execute(["system", "status", "--format", "json"], timeout: 15)
+        try Task.checkCancellation()
         let output = result.standardOutput.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !output.isEmpty else {
             if result.succeeded { throw ContainerCLIError.noMachineReadableOutput(result) }
@@ -363,6 +379,7 @@ public actor ContainerCLI {
         if includeStopped { arguments.append("--all") }
         arguments += ["--format", "json"]
         let result = try await execute(arguments, timeout: 30)
+        try Task.checkCancellation()
         try requireSuccess(result)
         return Executed(
             value: try ContainerJSONParser.parseContainers(result.standardOutput), result: result)
@@ -370,6 +387,7 @@ public actor ContainerCLI {
 
     private func loadImages() async throws -> Executed<[ImageSummary]> {
         let result = try await execute(["image", "list", "--format", "json"], timeout: 60)
+        try Task.checkCancellation()
         try requireSuccess(result)
         return Executed(
             value: try ContainerJSONParser.parseImages(result.standardOutput), result: result)
@@ -386,8 +404,35 @@ public actor ContainerCLI {
         )
     }
 
+    private func executeMutation(
+        _ arguments: [String],
+        timeout: TimeInterval,
+        systemStatus: Bool = false,
+        containers: Bool = false,
+        images: Bool = false
+    ) async throws -> CommandResult {
+        defer {
+            invalidate(systemStatus: systemStatus, containers: containers, images: images)
+        }
+        let result = try await execute(arguments, timeout: timeout)
+        try requireSuccess(result)
+        return result
+    }
+
     private func requireSuccess(_ result: CommandResult) throws {
         guard result.succeeded else { throw ContainerCLIError.commandFailed(result) }
+    }
+
+    private func cancelPendingRequests() {
+        cacheGeneration &+= 1
+        systemStatusRequest?.task.cancel()
+        for request in containerRequests.values {
+            request.task.cancel()
+        }
+        imageRequest?.task.cancel()
+        systemStatusRequest = nil
+        containerRequests.removeAll()
+        imageRequest = nil
     }
 
     private func invalidate(
