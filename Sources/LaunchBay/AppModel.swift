@@ -93,12 +93,19 @@
 
         private let defaults: UserDefaults
         private let client: ContainerCLI
+        private let refreshCadence: RefreshCadence
         private var autoRefreshTask: Task<Void, Never>?
         private var hasBootstrapped = false
+        private var isApplicationActive = true
 
-        init(defaults: UserDefaults = .standard, client: ContainerCLI = ContainerCLI()) {
+        init(
+            defaults: UserDefaults = .standard,
+            client: ContainerCLI = ContainerCLI(),
+            refreshCadence: RefreshCadence = RefreshCadence()
+        ) {
             self.defaults = defaults
             self.client = client
+            self.refreshCadence = refreshCadence
             self.customExecutablePath =
                 defaults.string(forKey: DefaultsKey.customExecutablePath) ?? ""
 
@@ -126,8 +133,9 @@
             restartAutoRefresh()
         }
 
-        func refreshAll(silent: Bool = false) async {
+        func refreshAll(silent: Bool = false, force: Bool = false) async {
             guard hasBootstrapped else { return }
+            if force { await client.invalidateReadCache() }
             if !silent { isRefreshing = true }
             defer { if !silent { isRefreshing = false } }
 
@@ -290,17 +298,43 @@
             await bootstrap()
         }
 
+        func setApplicationActive(_ isActive: Bool) {
+            guard isApplicationActive != isActive else { return }
+            isApplicationActive = isActive
+
+            if isActive {
+                autoRefreshTask?.cancel()
+                autoRefreshTask = nil
+                Task { [weak self] in
+                    guard let self else { return }
+                    await refreshAll(silent: true, force: true)
+                    restartAutoRefresh()
+                }
+            } else {
+                autoRefreshTask?.cancel()
+                autoRefreshTask = nil
+            }
+        }
+
         func restartAutoRefresh() {
             autoRefreshTask?.cancel()
-            guard autoRefreshSeconds > 0 else { return }
+            autoRefreshTask = nil
+            guard isApplicationActive, autoRefreshSeconds > 0 else { return }
+
             autoRefreshTask = Task { [weak self] in
                 while !Task.isCancelled {
                     guard let self else { return }
-                    let nanoseconds = UInt64(max(1, self.autoRefreshSeconds) * 1_000_000_000)
+                    let interval = refreshCadence.interval(
+                        baseInterval: autoRefreshSeconds,
+                        systemState: systemStatus.state,
+                        runningContainerCount: runningContainerCount
+                    )
+                    guard interval > 0 else { return }
+                    let nanoseconds = UInt64(interval * 1_000_000_000)
                     try? await Task.sleep(nanoseconds: nanoseconds)
                     guard !Task.isCancelled else { return }
-                    if self.activeOperation == nil {
-                        await self.refreshAll(silent: true)
+                    if activeOperation == nil {
+                        await refreshAll(silent: true)
                     }
                 }
             }

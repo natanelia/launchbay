@@ -28,7 +28,7 @@
                     }
 
                     Button {
-                        Task { await model.refreshAll() }
+                        Task { await model.refreshAll(force: true) }
                     } label: {
                         Label("Refresh", systemImage: "arrow.clockwise")
                     }
