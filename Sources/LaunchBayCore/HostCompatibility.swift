@@ -1,6 +1,6 @@
 import Foundation
 
-public struct HostCompatibility: Hashable, Codable, Sendable {
+public struct HostCompatibility: Sendable {
     public let isMacOS: Bool
     public let isAppleSilicon: Bool
     public let operatingSystemVersion: OperatingSystemVersion
