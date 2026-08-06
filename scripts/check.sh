@@ -5,10 +5,10 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
 echo "==> Formatting Swift"
-swift-format format --in-place --recursive Package.swift Sources Tests
+swift format format --in-place --recursive Package.swift Sources Tests
 
 echo "==> Linting Swift"
-swift-format lint --strict --recursive Package.swift Sources Tests
+swift format lint --strict --recursive Package.swift Sources Tests
 
 echo "==> Running tests"
 swift test
