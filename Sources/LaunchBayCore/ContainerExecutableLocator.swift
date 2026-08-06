@@ -1,14 +1,9 @@
 import Foundation
 
 public struct ContainerExecutableLocator: Sendable {
-    public let fileManager: FileManager
     public let environment: [String: String]
 
-    public init(
-        fileManager: FileManager = .default,
-        environment: [String: String] = ProcessInfo.processInfo.environment
-    ) {
-        self.fileManager = fileManager
+    public init(environment: [String: String] = ProcessInfo.processInfo.environment) {
         self.environment = environment
     }
 
@@ -34,7 +29,7 @@ public struct ContainerExecutableLocator: Sendable {
 
         var seen = Set<String>()
         for path in candidates where seen.insert(path).inserted {
-            if fileManager.isExecutableFile(atPath: path) {
+            if FileManager.default.isExecutableFile(atPath: path) {
                 return URL(fileURLWithPath: path)
             }
         }
