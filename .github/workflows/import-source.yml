@@ -1,0 +1,57 @@
+name: Import LaunchBay source
+
+on:
+  push:
+    branches:
+      - agent/build-launchbay
+    paths:
+      - ".launchbay-import/**"
+      - ".github/workflows/import-source.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  import:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out import branch
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: true
+          fetch-depth: 0
+
+      - name: Detect ready marker
+        id: ready
+        shell: bash
+        run: |
+          if [[ -f .launchbay-import/READY ]]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Reconstruct and commit source
+        if: steps.ready.outputs.ready == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          expected_chunks=11
+          actual_chunks="$(find .launchbay-import -maxdepth 1 -type f -name 'chunk-*' | wc -l | tr -d ' ')"
+          test "$actual_chunks" = "$expected_chunks"
+
+          cat .launchbay-import/chunk-* | base64 --decode > /tmp/launchbay.tar.xz
+          echo "49dba2505012cdb34ef293c778d695b034f5e6f812052f44d6f72735fd6351cb  /tmp/launchbay.tar.xz" | sha256sum --check -
+
+          mkdir /tmp/launchbay-source
+          tar -xJf /tmp/launchbay.tar.xz -C /tmp/launchbay-source
+
+          git rm -rf .
+          cp -a /tmp/launchbay-source/. .
+          git add -A
+          git config user.name "Natan"
+          git config user.email "1708681+natanelia@users.noreply.github.com"
+          git commit -m "Build LaunchBay"
+          git push origin HEAD:agent/build-launchbay
