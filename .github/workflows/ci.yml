@@ -28,7 +28,7 @@ jobs:
         run: swift --version
 
       - name: Lint
-        run: swift-format lint --strict --recursive Package.swift Sources Tests
+        run: swift format lint --strict --recursive Package.swift Sources Tests
 
       - name: Test
         run: swift test
