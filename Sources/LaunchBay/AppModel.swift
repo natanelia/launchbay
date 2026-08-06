@@ -97,6 +97,8 @@
         private var autoRefreshTask: Task<Void, Never>?
         private var hasBootstrapped = false
         private var isApplicationActive = true
+        private var refreshGeneration: UInt64 = 0
+        private var visibleRefreshID: UUID?
 
         init(
             defaults: UserDefaults = .standard,
@@ -135,9 +137,25 @@
 
         func refreshAll(silent: Bool = false, force: Bool = false) async {
             guard hasBootstrapped else { return }
-            if force { await client.invalidateReadCache() }
-            if !silent { isRefreshing = true }
-            defer { if !silent { isRefreshing = false } }
+
+            refreshGeneration &+= 1
+            let generation = refreshGeneration
+            let progressID = silent ? nil : UUID()
+            if let progressID {
+                visibleRefreshID = progressID
+                isRefreshing = true
+            }
+            defer {
+                if let progressID, visibleRefreshID == progressID {
+                    visibleRefreshID = nil
+                    isRefreshing = false
+                }
+            }
+
+            if force {
+                await client.invalidateReadCache()
+                guard generation == refreshGeneration else { return }
+            }
 
             guard isCLIInstalled else {
                 systemStatus = .unavailable
@@ -148,8 +166,10 @@
 
             do {
                 let status = try await client.systemStatus()
+                guard generation == refreshGeneration else { return }
                 systemStatus = status.value
             } catch {
+                guard generation == refreshGeneration else { return }
                 systemStatus = ContainerSystemStatus(state: .unknown)
                 if !silent { present(error, title: "Could not read system status") }
                 return
@@ -170,20 +190,24 @@
 
             do {
                 let executed = try await containerRequest.value
+                guard generation == refreshGeneration else { return }
                 containers = executed.value.sorted {
                     if $0.state != $1.state { return $0.state == .running }
                     return $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
                 }
             } catch {
+                guard generation == refreshGeneration else { return }
                 if !silent { present(error, title: "Could not list containers") }
             }
 
             do {
                 let executed = try await imageRequest.value
+                guard generation == refreshGeneration else { return }
                 images = executed.value.sorted {
                     $0.reference.localizedCaseInsensitiveCompare($1.reference) == .orderedAscending
                 }
             } catch {
+                guard generation == refreshGeneration else { return }
                 if !silent { present(error, title: "Could not list images") }
             }
         }
@@ -333,7 +357,7 @@
                     let nanoseconds = UInt64(interval * 1_000_000_000)
                     try? await Task.sleep(nanoseconds: nanoseconds)
                     guard !Task.isCancelled else { return }
-                    if activeOperation == nil {
+                    if activeOperation == nil, !isRefreshing {
                         await refreshAll(silent: true)
                     }
                 }
